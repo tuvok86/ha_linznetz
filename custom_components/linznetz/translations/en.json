@@ -3,15 +3,20 @@
         "step": {
             "user": {
                 "title": "LINZ NETZ",
-                "description": "Create a new entity to store imported QH reports from LINZ NETZ.",
+                "description": "Create a new entity to store QH reports from LINZ NETZ. Username and password are optional - if provided, data will be fetched automatically from the LinzNetz portal.",
                 "data": {
                     "meter_point_number": "Meter Point Number",
-                    "name": "Name"
+                    "name": "Name",
+                    "username": "LinzNetz Username",
+                    "password": "LinzNetz Password"
                 }
             }
         },
         "error": {
-            "invalid_length": "Meter Point Number has invalid length, must be 33 characters long."
+            "invalid_length": "Meter Point Number has invalid length, must be 33 characters long.",
+            "invalid_auth": "Invalid username or password for LinzNetz portal.",
+            "cannot_connect": "Could not connect to LinzNetz portal. Please try again later.",
+            "unknown": "An unexpected error occurred."
         }
     }
 }

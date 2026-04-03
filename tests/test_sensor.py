@@ -100,6 +100,7 @@ DATA_WITH_INVALID_PREFIX = [
 async def prepare_and_call_import_service_mocked(hass, csv_data):
     """Helper to prepare and call the import service with mocked csv_data."""
     config_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG)
+    hass.data.setdefault(DOMAIN, {})
     await async_setup_entry(hass, config_entry)
     await hass.async_block_till_done()
 
@@ -154,6 +155,7 @@ async def test_import_service_with_actual_file(hass):
     """Test import service with actual file."""
 
     config_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG)
+    hass.data.setdefault(DOMAIN, {})
     assert await async_setup_entry(hass, config_entry)
     await hass.async_block_till_done()
 
@@ -178,6 +180,7 @@ async def test_import_service_with_missing_file(hass):
     """Test import service with missing file."""
 
     config_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG)
+    hass.data.setdefault(DOMAIN, {})
     assert await async_setup_entry(hass, config_entry)
     await hass.async_block_till_done()
 

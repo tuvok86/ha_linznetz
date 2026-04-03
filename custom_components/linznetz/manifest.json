@@ -2,10 +2,11 @@
   "domain": "linznetz",
   "name": "LINZ NETZ",
   "documentation": "https://github.com/DarkC35/ha_linznetz",
-  "iot_class": "calculated",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/DarkC35/ha_linznetz/issues",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "config_flow": true,
+  "homeassistant": "2025.11.0",
   "codeowners": [
     "@DarkC35"
   ]

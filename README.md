@@ -23,7 +23,7 @@ The current code was adapted and tested with the following required versions. Th
 
 Component | Min. Required Version
 -|-
-Home-Assistant | 2022.12.0
+Home-Assistant | 2025.11.0
 HACS | 1.28.4
 
 ### HACS (Custom Repository)
@@ -64,16 +64,27 @@ custom_components/linznetz/services.yaml
 
 **To use this integration you need a free account at https://www.linznetz.at and enable the quarter-hour(QH) analysis ("Viertelstundenauswertung"). Then it will take 1-2 days until your SmartMeter transfers the QH data to LINZ NETZ.** Please make sure you have a LINZ NETZ account since *LINZ AG Plus24* does not support QH E-Mail reports! (You can have both accounts if you want to.) You can check on the LINZ NETZ services page > "Verbrauchsdateninformation"/"Verbräuche anzeigen" if your SmartMeter supports QH analysis and if your data is already transmitted to LINZ NETZ.
 
-During the configuration insert the 33 characters long "meter point number" ("Zählerpunktnummer") you can find on https://www.linznetz.at > "Meine Verbräuche" > "Verbräuche anzeigen". This number is used as the unique ID. If you don't want to use your real number (e.g. for testing) just use `AT0000000000000000000000000000000` but please make sure you need another number if you need a second instance of this integration! The second configuration value `name` is optional, you can use it to identify different SmartMeters, the default name is "SmartMeter".
+During the configuration you need to provide:
 
-This will create a `sensor.smartmeter_energy` entity which you can use to import the QH reports to. To import your QH reports use the `linznetz.import_report` service.
+1. **Meter Point Number** (required): The 33 characters long "Zählerpunktnummer" you can find on https://www.linznetz.at > "Meine Verbräuche" > "Verbräuche anzeigen". This number is used as the unique ID. If you don't want to use your real number (e.g. for testing) just use `AT0000000000000000000000000000000` but please make sure you need another number if you need a second instance of this integration!
+2. **Name** (optional): A custom name to identify different SmartMeters. The default name is "SmartMeter".
+3. **LinzNetz Username** (optional): Your LinzNetz Serviceportal username (e-mail address). If provided together with the password, the integration will **automatically fetch** your consumption data every 6 hours.
+4. **LinzNetz Password** (optional): Your LinzNetz Serviceportal password.
+
+### Automatic Data Fetching (recommended)
+
+If you provide your LinzNetz credentials, the integration will automatically log into the LinzNetz Serviceportal and download your QH data. Data is fetched every 6 hours and covers the last 3 days to catch any gaps. LinzNetz typically provides data with a 1-2 day delay.
+
+### Manual CSV Import (fallback)
+
+You can still use the manual `linznetz.import_report` service to import CSV files. This is useful for:
+- Bulk importing historical data
+- If you prefer not to store your credentials
+- As a fallback if the automatic fetch encounters issues
+
+This will create a `sensor.smartmeter_energy` entity which you can use to import the QH reports to.
 
 After the import you can use the `sensor.smartmeter_energy` entity on the energy dashboard as a "grid consumption".
-
-### TODOs
-* Describe `linznetz.import_report` service.
-* Add tests (see [#10](https://github.com/DarkC35/ha_linznetz/issues/10)).
-* Add screenshots.
 
 ## Troubleshooting
 

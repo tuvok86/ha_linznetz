@@ -8,7 +8,7 @@ import os
 import voluptuous as vol
 
 from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
+from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     get_last_statistics,
     async_import_statistics,
@@ -22,16 +22,19 @@ from homeassistant.components.sensor import (
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .api import LinzNetzApiClient, LinzNetzAuthError, LinzNetzConnectionError
 from .const import (
     CONF_METER_POINT_NUMBER,
     CONF_NAME,
     DEFAULT_NAME,
+    DEFAULT_UPDATE_INTERVAL_HOURS,
     DOMAIN,
     SERVICE_IMPORT_REPORT,
     END_TIME_KEY,
@@ -42,7 +45,7 @@ _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
 async def async_setup_entry(
-    _hass: HomeAssistant, config_entry: ConfigEntry, async_add_devices
+    hass: HomeAssistant, config_entry: ConfigEntry, async_add_devices
 ):
     """Setup sensor platform."""
 
@@ -55,7 +58,8 @@ async def async_setup_entry(
         LinzNetzSensor.import_report.__name__,
     )
 
-    async_add_devices([LinzNetzSensor(config_entry)])
+    client = hass.data[DOMAIN][config_entry.entry_id].get("client")
+    async_add_devices([LinzNetzSensor(config_entry, client)])
 
 
 def get_csv_data_value_key(csv_data: list) -> str:
@@ -119,10 +123,11 @@ def validate_hour_block(hour_block: list) -> bool:
 class LinzNetzSensor(SensorEntity):
     """linznetz Sensor class."""
 
-    def __init__(self, config_entry: ConfigEntry):
+    def __init__(self, config_entry: ConfigEntry, client: LinzNetzApiClient | None = None):
         """Initialize the sensor."""
         self.config_entry = config_entry
-        _unique_id = config_entry.data[CONF_METER_POINT_NUMBER]
+        self._client = client
+        self._meter_point_number = config_entry.data[CONF_METER_POINT_NUMBER]
         _name = config_entry.data.get(CONF_NAME, DEFAULT_NAME)
         self._attr_name = f"{_name} Energy"
 
@@ -134,9 +139,84 @@ class LinzNetzSensor(SensorEntity):
         self._attr_available = True
 
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, _unique_id)}, name=_name
+            identifiers={(DOMAIN, self._meter_point_number)}, name=_name
         )
-        self._attr_unique_id = f"{_unique_id}_energy"
+        self._attr_unique_id = f"{self._meter_point_number}_energy"
+        self._unsub_timer: CALLBACK_TYPE | None = None
+        self._last_fetch_date: datetime | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        await super().async_added_to_hass()
+        if self._client:
+            # Schedule periodic automatic data fetching
+            self._unsub_timer = async_track_time_interval(
+                self.hass,
+                self._async_auto_fetch,
+                timedelta(hours=DEFAULT_UPDATE_INTERVAL_HOURS),
+            )
+            _LOGGER.debug(
+                "Scheduled automatic data fetching every %d hours",
+                DEFAULT_UPDATE_INTERVAL_HOURS,
+            )
+            # Do an initial fetch after a short delay to let HA fully start
+            self.hass.async_create_task(self._async_initial_fetch())
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Run when entity will be removed from hass."""
+        if self._unsub_timer:
+            self._unsub_timer()
+            self._unsub_timer = None
+        await super().async_will_remove_from_hass()
+
+    async def _async_initial_fetch(self) -> None:
+        """Perform the initial data fetch after a short delay."""
+        # Wait a bit for HA to fully initialize
+        await self.hass.async_add_executor_job(lambda: None)
+        await self._async_auto_fetch(None)
+
+    async def _async_auto_fetch(self, _now) -> None:
+        """Automatically fetch and import data from LinzNetz portal."""
+        if not self._client:
+            return
+
+        try:
+            # Fetch data for yesterday (LinzNetz provides data with 1-2 day delay)
+            date_to = dt_util.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            date_from = date_to - timedelta(days=3)  # Fetch last 3 days to catch gaps
+
+            _LOGGER.debug(
+                "Auto-fetching consumption data from %s to %s",
+                date_from.strftime("%d.%m.%Y"),
+                date_to.strftime("%d.%m.%Y"),
+            )
+
+            csv_data = await self._client.get_consumption_data(
+                self._meter_point_number, date_from, date_to
+            )
+
+            if not csv_data:
+                _LOGGER.debug("No new consumption data available")
+                return
+
+            if len(csv_data) % 4 != 0:
+                _LOGGER.warning(
+                    "Auto-fetched data has invalid length (%d rows, not divisible by 4). Skipping.",
+                    len(csv_data),
+                )
+                return
+
+            await self._import_csv_data(csv_data)
+            self._last_fetch_date = dt_util.utcnow()
+            _LOGGER.info(
+                "Successfully auto-imported %d QH records from LinzNetz",
+                len(csv_data),
+            )
+
+        except (LinzNetzAuthError, LinzNetzConnectionError) as err:
+            _LOGGER.warning("Failed to auto-fetch data from LinzNetz: %s", err)
+        except Exception:
+            _LOGGER.exception("Unexpected error during auto-fetch from LinzNetz")
 
     async def import_report(self, path: str) -> None:
         """Service to import csv data from path."""
@@ -148,34 +228,29 @@ class LinzNetzSensor(SensorEntity):
             self.unique_id,
         )
 
-        # metadata for external stats
-        # metadata = StatisticMetaData(
-        #     unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        #     state_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        #     source=DOMAIN,
-        #     name=self.name,
-        #     statistic_id=self.statistic_id,
-        #     has_mean=False,
-        #     has_sum=True,
-        # )
-        # metadata for internal stats
-        metadata = StatisticMetaData(
-            unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-            # state_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-            source="recorder",
-            name=self.name,
-            statistic_id=self.entity_id,
-            has_mean=False,
-            has_sum=True,
-        )
-        statistics = []
-
         csv_data = get_csv_data_list_from_file(path)
 
         if len(csv_data) % 4 != 0:
             raise HomeAssistantError(
                 "Report to import seems to be corrupted. Please ensure that there are at least 4 QH values per hour."
             )
+
+        await self._import_csv_data(csv_data)
+
+    async def _import_csv_data(self, csv_data: list) -> None:
+        """Shared logic to import CSV data into HA statistics."""
+        # metadata for internal stats
+        metadata = StatisticMetaData(
+            unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            source="recorder",
+            name=self.name,
+            statistic_id=self.entity_id,
+            has_mean=False,
+            has_sum=True,
+            mean_type=StatisticMeanType.NONE,
+            unit_class="energy",
+        )
+        statistics = []
 
         last_inserted_stat = await get_instance(self.hass).async_add_executor_job(
             get_last_statistics, self.hass, 1, self.entity_id, True, {"sum"}
