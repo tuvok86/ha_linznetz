@@ -199,11 +199,18 @@ class LinzNetzSensor(SensorEntity):
                 _LOGGER.debug("No new consumption data available")
                 return
 
-            if len(csv_data) % 4 != 0:
-                _LOGGER.warning(
-                    "Auto-fetched data has invalid length (%d rows, not divisible by 4). Skipping.",
+            # Trim trailing incomplete hour block (e.g. partial current day)
+            remainder = len(csv_data) % 4
+            if remainder != 0:
+                _LOGGER.debug(
+                    "Trimming %d trailing rows from %d total (incomplete hour block)",
+                    remainder,
                     len(csv_data),
                 )
+                csv_data = csv_data[:-remainder]
+
+            if not csv_data:
+                _LOGGER.debug("No complete hour blocks in fetched data")
                 return
 
             await self._import_csv_data(csv_data)

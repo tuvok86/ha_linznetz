@@ -227,24 +227,7 @@ class LinzNetzApiClient:
                     )
                 html = await resp.text()
 
-            # Log page info for debugging
-            _LOGGER.debug(
-                "Consumption page loaded (length: %d chars). First 2000 chars:\n%s",
-                len(html),
-                html[:2000],
-            )
-
-            # Log all hidden inputs found on the page
-            hidden_inputs = re.findall(
-                r'<input[^>]*type="hidden"[^>]*/?>',
-                html,
-                re.IGNORECASE,
-            )
-            _LOGGER.debug("Hidden inputs found: %s", hidden_inputs)
-
-            # Log all form tags
-            form_tags = re.findall(r'<form[^>]*>', html, re.IGNORECASE)
-            _LOGGER.debug("Form tags found: %s", form_tags)
+            _LOGGER.debug("Consumption page loaded (length: %d chars)", len(html))
 
             # Extract the javax.faces.ViewState
             viewstate_match = re.search(
@@ -482,4 +465,15 @@ class LinzNetzApiClient:
     def _parse_csv_text(csv_text: str) -> list[dict]:
         """Parse CSV text into a list of dicts (same format as file-based CSV)."""
         reader = csv.DictReader(io.StringIO(csv_text), delimiter=";")
-        return list(reader)
+        # Filter out empty or incomplete rows (e.g. trailing empty lines,
+        # summary rows, or rows where data hasn't been delivered yet)
+        data = []
+        for row in reader:
+            # A valid QH row must have "Datum von" and "Energiemenge in kWh"
+            datum_von = row.get("Datum von", "").strip()
+            energie = row.get("Energiemenge in kWh", "").strip()
+            if datum_von and energie:
+                data.append(row)
+            else:
+                _LOGGER.debug("Skipping incomplete CSV row: %s", row)
+        return data
