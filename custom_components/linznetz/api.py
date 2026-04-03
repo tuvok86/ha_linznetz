@@ -227,23 +227,63 @@ class LinzNetzApiClient:
                     )
                 html = await resp.text()
 
+            # Log page info for debugging
+            _LOGGER.debug(
+                "Consumption page loaded (length: %d chars). First 2000 chars:\n%s",
+                len(html),
+                html[:2000],
+            )
+
+            # Log all hidden inputs found on the page
+            hidden_inputs = re.findall(
+                r'<input[^>]*type="hidden"[^>]*/?>',
+                html,
+                re.IGNORECASE,
+            )
+            _LOGGER.debug("Hidden inputs found: %s", hidden_inputs)
+
+            # Log all form tags
+            form_tags = re.findall(r'<form[^>]*>', html, re.IGNORECASE)
+            _LOGGER.debug("Form tags found: %s", form_tags)
+
             # Extract the javax.faces.ViewState
             viewstate_match = re.search(
                 r'name="javax\.faces\.ViewState"\s+value="([^"]+)"',
                 html,
             )
             if not viewstate_match:
+                # Try alternative: value before name
+                viewstate_match = re.search(
+                    r'value="([^"]+)"\s+name="javax\.faces\.ViewState"',
+                    html,
+                )
+            if not viewstate_match:
                 # Try alternative: hidden input with id
                 viewstate_match = re.search(
                     r'id="javax\.faces\.ViewState[^"]*"\s+value="([^"]+)"',
                     html,
                 )
-                if not viewstate_match:
-                    # Try alternative: j_idt pattern
-                    viewstate_match = re.search(
-                        r'name="(javax\.faces\.ViewState)"\s[^>]*value="([^"]+)"',
-                        html,
-                    )
+            if not viewstate_match:
+                # Try alternative: any attribute order
+                viewstate_match = re.search(
+                    r'<input[^>]*name="javax\.faces\.ViewState"[^>]*value="([^"]+)"',
+                    html,
+                    re.DOTALL,
+                )
+            if not viewstate_match:
+                # Try with id instead of name
+                viewstate_match = re.search(
+                    r'<input[^>]*id="j_id[^"]*:javax\.faces\.ViewState[^"]*"[^>]*value="([^"]+)"',
+                    html,
+                    re.DOTALL,
+                )
+            if not viewstate_match:
+                # Last resort: any ViewState-like hidden field
+                viewstate_match = re.search(
+                    r'ViewState[^>]*value="([^"]+)"',
+                    html,
+                    re.IGNORECASE,
+                )
 
             if not viewstate_match:
                 raise LinzNetzConnectionError(
